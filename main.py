@@ -32,7 +32,7 @@ detector = vision.ObjectDetector.create_from_options(options)
 # Main loop
 while True:
     frame = picam2.capture_array()
-    frame = cv2.flip(frame, 1)
+    frame = cv2.flip(frame, -1)
 
     # Convert frame to MediaPipe image
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
