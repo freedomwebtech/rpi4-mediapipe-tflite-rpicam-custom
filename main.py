@@ -1,57 +1,68 @@
-import cv2
-from ultralytics import YOLO
 import numpy as np
+import cv2
 from picamera2 import Picamera2
-import time
+import mediapipe as mp
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
 
-# Load YOLOv8 model
-model = YOLO('best_float32.tflite')
-names = model.names
+# Display settings
+MARGIN = -1
+ROW_SIZE = 10
+FONT_SIZE = 1
+FONT_THICKNESS = 1
+rect_color = (255, 0, 255)
+TEXT_COLOR = (255, 0, 0)
 
-# Initialize Picamera2
+# Initialize PiCamera2
 picam2 = Picamera2()
 picam2.preview_configuration.main.size = (640, 480)
 picam2.preview_configuration.main.format = "RGB888"
 picam2.preview_configuration.align()
 picam2.configure("preview")
 picam2.start()
-time.sleep(2)  # Let camera warm up
 
+# Load TFLite model
+base_options = python.BaseOptions(model_asset_path="best.tflite")
+options = vision.ObjectDetectorOptions(
+    base_options=base_options,
+    score_threshold=0.5
+)
+detector = vision.ObjectDetector.create_from_options(options)
 
-frame_count = 0
-
+# Main loop
 while True:
-    # Capture frame from Pi Camera
     frame = picam2.capture_array()
-    frame = cv2.flip(frame, -1)  # Flip vertically and horizontally if needed
+    frame = cv2.flip(frame, 1)
 
-    frame_count += 1
-    if frame_count % 3 != 0:
-        continue
+    # Convert frame to MediaPipe image
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
 
-    frame = cv2.resize(frame, (600,480))
-    results = model.track(frame, persist=True,imgsz=240)
+    # Perform detection
+    detection_result = detector.detect(mp_image)
 
-    if results[0].boxes.id is not None:
-        ids = results[0].boxes.id.cpu().numpy().astype(int)
-        boxes = results[0].boxes.xyxy.cpu().numpy().astype(int)
-        class_ids = results[0].boxes.cls.int().cpu().tolist()
+    # Draw results
+    for detection in detection_result.detections:
+        bbox = detection.bounding_box
+        x, y = int(bbox.origin_x), int(bbox.origin_y)
+        w, h = int(bbox.width), int(bbox.height)
 
-        for track_id, box, class_id in zip(ids, boxes, class_ids):
-            x1, y1, x2, y2 = box
-            cx = (x1 + x2) // 2
-            cy = (y1 + y2) // 2
-            label = names[class_id]
+        # Draw bounding box
+        cv2.rectangle(frame, (x, y), (x + w, y + h), rect_color, 3)
 
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
-            cv2.putText(frame, f"{label} ID:{track_id}", (x1, y1 - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
+        # Draw label
+        category = detection.categories[0]
+        category_name = category.category_name
+        probability = round(category.score, 2)
+        label = f"{category_name} ({probability})"
+        cv2.putText(frame, label, (x, y - 10), cv2.FONT_HERSHEY_PLAIN, FONT_SIZE, TEXT_COLOR, FONT_THICKNESS)
 
-    cv2.imshow("FRAME", frame)
+    # Show the output
+    cv2.imshow("PiCam2 Object Detection", frame)
 
-    # Press ESC to exit
+    # Exit on ESC key
     if cv2.waitKey(1) & 0xFF == 27:
         break
 
-picam2.close()
+# Cleanup
 cv2.destroyAllWindows()
+picam2.stop()
